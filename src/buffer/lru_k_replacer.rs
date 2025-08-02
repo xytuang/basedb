@@ -15,8 +15,6 @@ use std::sync::{Arc, Mutex};
 pub struct LRUKReplacer {
     /// Maps from a frame id to the history of the frame
     node_store: HashMap<FrameId, LRUKNode>,
-
-    current_timestamp: f64,
     /// Number of frames that can be evicted
     curr_size: usize,
     /// Number of frames to keep track of
@@ -47,7 +45,6 @@ impl LRUKReplacer {
     pub fn new(num_frames: usize, k: usize) -> LRUKReplacer {
         LRUKReplacer {
             node_store: HashMap::new(),
-            current_timestamp: get_current_time_f64(),
             curr_size: 0,
             replacer_size: num_frames,
             k: k,
@@ -86,16 +83,20 @@ impl LRUKReplacer {
             if k_distance.is_finite() {
                 match best_candidate {
                     None => best_candidate = Some((*frame_id, k_distance)),
-                    Some((_, dist)) => if k_distance > dist {
-                        best_candidate = Some((*frame_id, k_distance))
+                    Some((_, dist)) => {
+                        if k_distance > dist {
+                            best_candidate = Some((*frame_id, k_distance))
+                        }
                     }
                 }
             } else {
                 let oldest = node.history.front().copied().unwrap_or(f64::INFINITY);
                 match best_inf_candidate {
                     None => best_inf_candidate = Some((*frame_id, oldest)),
-                    Some((_, existing_oldest)) => if oldest < existing_oldest {
-                        best_inf_candidate = Some((*frame_id, oldest))
+                    Some((_, existing_oldest)) => {
+                        if oldest < existing_oldest {
+                            best_inf_candidate = Some((*frame_id, oldest))
+                        }
                     }
                 }
             }
@@ -103,7 +104,7 @@ impl LRUKReplacer {
 
         let victim = if let Some((frame_id, _)) = best_inf_candidate {
             Some(frame_id)
-        } else if let Some((frame_id, _)) = best_candidate  {
+        } else if let Some((frame_id, _)) = best_candidate {
             Some(frame_id)
         } else {
             None
@@ -116,7 +117,6 @@ impl LRUKReplacer {
         }
 
         return None;
-        
     }
 
     /// Record the event that the given frame id is accessed at current timestamp
@@ -228,12 +228,10 @@ impl LRUKNode {
 #[cfg(test)]
 mod tests {
     use crate::buffer::lru_k_replacer::LRUKReplacer;
-    use crate::common::types::FrameId;
 
     #[test]
     fn test_lru_k_replacer() {
         let mut lru_replacer = LRUKReplacer::new(7, 2);
-        let mut frame: Option<FrameId> = None;
 
         let _ = lru_replacer.record_access(1);
         let _ = lru_replacer.record_access(2);
@@ -296,7 +294,7 @@ mod tests {
         let _ = lru_replacer.set_evictable(1, false);
         assert_eq!(lru_replacer.size(), 0);
 
-        frame = lru_replacer.evict();
+        let mut frame = lru_replacer.evict();
         assert!(frame.is_none());
 
         let _ = lru_replacer.set_evictable(1, true);
