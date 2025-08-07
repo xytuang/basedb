@@ -93,7 +93,6 @@ impl ReadPageGuard {
 impl Drop for ReadPageGuard {
     fn drop(&mut self) {
         let new_pin_count = self.frame.decrease_pin_count();
-        // println!("FrameId: {}, PageId: {}, new pin count {}", self.frame.get_frame_id(), self.frame.get_page_id(), new_pin_count);
         if new_pin_count == 0 {
             self.replacer
                 .set_evictable(self.frame.get_frame_id(), true)
@@ -155,15 +154,8 @@ impl WritePageGuard {
 
 impl Drop for WritePageGuard {
     fn drop(&mut self) {
-        // println!("---------------------------------");
-        // println!("Called drop");
-        // println!("---------------------------------");
         let new_pin_count = self.frame.decrease_pin_count();
-        // println!("FrameId: {}, PageId: {}, new pin count {}", self.frame.get_frame_id(), self.frame.get_page_id(), new_pin_count);
         if new_pin_count == 0 {
-            // println!("---------------------------------");
-            // println!("Setting evictable");
-            // println!("---------------------------------");
 
             self.replacer
                 .set_evictable(self.frame.get_frame_id(), true)
@@ -247,8 +239,6 @@ mod tests {
 
         // Get a new write page and edit it
         let mutable_pid = bpm.new_page();
-        println!("Writing to page {}", mutable_pid);
-        println!("---------------------------------");
         {
             let mutable_guard = bpm.write_page(mutable_pid).unwrap();
             let data = mutable_guard.get_data();
