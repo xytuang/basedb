@@ -56,6 +56,10 @@ impl DiskScheduler {
         }
     }
 
+    pub fn deallocate_page(&self, page_id: PageId) {
+        self.disk_manager.delete_page(page_id).unwrap();
+    }
+
     /// Destroys the DiskScheduler and stops the background thread inside it
     pub fn shutdown(&mut self) {
         let _ = self.sender.send(DiskRequest::Shutdown);
