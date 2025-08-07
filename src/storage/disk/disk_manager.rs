@@ -3,7 +3,7 @@ use std::{
     fs::{File, OpenOptions},
     io::{Error, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    sync::{Mutex}
+    sync::{Arc, Mutex, RwLock},
 };
 
 use crate::common::{
@@ -18,7 +18,7 @@ use crate::common::{
 /// DiskManager uses lazy allocation, so it only allocates space on disk when accessed. It maintains a map from page ids to offsets in the database file.
 /// When a page is deleted, it is marked free and can be reused by future allocations.
 pub struct DiskManager {
-    inner: Mutex<DiskManagerInner>
+    inner: Mutex<DiskManagerInner>,
 }
 
 struct DiskManagerInner {
@@ -47,20 +47,14 @@ impl DiskManager {
     /// # Arguments
     /// * `db_file_name` - The file name of the database file to write to
     pub fn new(db_file_name: &Path) -> Result<Self, DiskManagerError> {
-        let log_file_name = db_file_name
-            .file_stem()
-            .ok_or(DiskManagerError::InvalidDBFile)
-            .map(|stem| {
-                let mut log_path = PathBuf::from(stem);
-                log_path.set_extension("log");
-                log_path
-            })?;
+        let mut log_path = PathBuf::from(db_file_name);
+        log_path.set_extension("log");
 
         let log_io = OpenOptions::new()
             .read(true)
             .append(true)
             .create(true)
-            .open(&log_file_name)
+            .open(&log_path)
             .map_err(InternalError::IOError)?;
 
         let db_io = OpenOptions::new()
@@ -79,12 +73,12 @@ impl DiskManager {
             free_slots: VecDeque::new(),
             db_file_name: db_file_name.to_str().unwrap_or_default().to_string(),
             db_io,
-            log_file_name: log_file_name.display().to_string(),
+            log_file_name: log_path.to_str().unwrap_or_default().to_string(),
             log_io,
         };
 
         Ok(DiskManager {
-            inner: Mutex::new(inner)
+            inner: Mutex::new(inner),
         })
     }
 
@@ -96,24 +90,27 @@ impl DiskManager {
     pub fn write_page(
         &self,
         page_id: PageId,
-        page_data: &[u8; BASEDB_PAGE_SIZE],
+        page_data: Arc<RwLock<[u8; BASEDB_PAGE_SIZE]>>,
     ) -> Result<(), DiskManagerError> {
         let mut inner = self.inner.lock().unwrap();
-        let offset = match inner.pages.get(&page_id) {
-            Some(&offset) => offset,
-            None => Self::allocate_page(&mut inner)?,
+        let offset = if let Some(&offset) = inner.pages.get(&page_id) {
+            offset
+        } else {
+            let offset = Self::allocate_page(&mut inner)?;
+            inner.pages.insert(page_id, offset);
+            offset
         };
 
-        inner.db_io
+        inner
+            .db_io
             .seek(SeekFrom::Start(offset as u64))
             .map_err(InternalError::IOError)?;
-        inner.db_io
-            .write_all(page_data)
+        let data_guard = page_data.read().unwrap();
+        inner
+            .db_io
+            .write_all(&*data_guard)
             .map_err(InternalError::IOError)?;
-        inner.db_io
-            .flush()
-            .map_err(InternalError::IOError)?;
-        inner.pages.insert(page_id, offset);
+        inner.db_io.flush().map_err(InternalError::IOError)?;
         inner.num_writes += 1;
 
         Ok(())
@@ -127,36 +124,36 @@ impl DiskManager {
     pub fn read_page(
         &self,
         page_id: PageId,
-        page_data: &mut [u8; BASEDB_PAGE_SIZE],
+        page_data: Arc<RwLock<[u8; BASEDB_PAGE_SIZE]>>,
     ) -> Result<(), DiskManagerError> {
         let mut inner = self.inner.lock().unwrap();
-        let offset = match inner.pages.get(&page_id) {
-            Some(&offset) => offset,
-            None => Self::allocate_page(&mut inner)?,
+        let offset = if let Some(&offset) = inner.pages.get(&page_id) {
+            offset
+        } else {
+            let offset = Self::allocate_page(&mut inner)?;
+            inner.pages.insert(page_id, offset);
+            offset
         };
 
-
-        let file_size = Self::get_file_size(&mut inner)
-            .map_err(InternalError::IOError)?;
+        let file_size = Self::get_file_size(&mut inner).map_err(InternalError::IOError)?;
         if (offset as u64) >= file_size {
             return Err(DiskManagerError::InvalidDBFile);
         }
 
-        inner.db_io
+        inner
+            .db_io
             .seek(SeekFrom::Start(offset as u64))
             .map_err(InternalError::IOError)?;
 
+        let mut data_guard = page_data.write().unwrap();
         let byte_count = inner
             .db_io
-            .read(page_data)
+            .read(&mut *data_guard)
             .map_err(InternalError::IOError)?;
 
         if byte_count < BASEDB_PAGE_SIZE {
-            page_data[byte_count..].fill(0);
+            data_guard[byte_count..].fill(0);
         }
-
-        // Optional: reinsert mapping (e.g. for LRU tracking)
-        inner.pages.insert(page_id, offset);
 
         Ok(())
     }
@@ -164,15 +161,10 @@ impl DiskManager {
     /// Marks the offset for this page as a free slot that can be overwritten
     pub fn delete_page(&self, page_id: PageId) -> Result<(), DiskManagerError> {
         let mut inner = self.inner.lock().unwrap();
-        if !inner.pages.contains_key(&page_id) {
-            return Ok(());
+        if let Some(offset) = inner.pages.remove(&page_id) {
+            inner.free_slots.push_back(offset);
+            inner.num_deletes += 1;
         }
-
-        let offset = *inner.pages.get(&page_id).unwrap();
-        inner.free_slots.push_back(offset);
-        inner.pages.remove(&page_id);
-        inner.num_deletes += 1;
-
         Ok(())
     }
 
@@ -197,19 +189,20 @@ impl DiskManager {
     /// Allocate a page in a free slot. If no free slot is available, append to the end of the file.
     /// Returns the offset of the allocated page
     fn allocate_page(inner: &mut DiskManagerInner) -> Result<usize, DiskManagerError> {
-        let _ = if !inner.free_slots.is_empty() {
-            let offset = inner.free_slots.pop_back().unwrap();
+        if let Some(offset) = inner.free_slots.pop_back() {
             return Ok(offset);
-        };
+        }
 
-        let _ = if inner.pages.len() + 1 >= inner.page_capacity {
-            inner.page_capacity *= 2;
-            inner.db_io
-                .set_len(((inner.page_capacity + 1) * BASEDB_PAGE_SIZE) as u64)
-                .map_err(InternalError::IOError)?;
-        };
+        let file_size = Self::get_file_size(inner).unwrap();
+        let offset = file_size as usize;
 
-        Ok(inner.pages.len() * BASEDB_PAGE_SIZE)
+        // Expand the file to accommodate the new page
+        inner
+            .db_io
+            .set_len(file_size + BASEDB_PAGE_SIZE as u64)
+            .map_err(InternalError::IOError)?;
+
+        Ok(offset)
     }
 
     /// Get disk file size
@@ -218,5 +211,17 @@ impl DiskManager {
             Err(e) => Err(e),
             Ok(m) => Ok(m.len()),
         }
+    }
+
+    /// Get db file name
+    pub fn get_db_file_name(&self) -> String {
+        let inner = self.inner.lock().unwrap();
+        inner.db_file_name.clone()
+    }
+
+    /// Get log file name
+    pub fn get_log_file_name(&self) -> String {
+        let inner = self.inner.lock().unwrap();
+        inner.log_file_name.clone()
     }
 }
