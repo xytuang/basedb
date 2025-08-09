@@ -1,6 +1,6 @@
+use crate::common::config::FrameId;
 use crate::common::errors::ReplacerError;
 use crate::common::time::get_current_time_f64;
-use crate::common::types::FrameId;
 use core::f64;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
