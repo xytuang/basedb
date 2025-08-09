@@ -1,8 +1,7 @@
 use crate::{
     common::{
-        constants::BASEDB_PAGE_SIZE,
+        config::{PageId, BASEDB_PAGE_SIZE},
         errors::{DiskSchedulerError, InternalError},
-        types::PageId,
     },
     storage::disk::disk_manager::DiskManager,
 };
@@ -20,7 +19,7 @@ pub enum DiskRequest {
         /// Flag indicating if this is a read/write request
         is_write: bool,
         /// Area to read data into from disk, OR write to disk
-        data: Arc<RwLock<[u8; BASEDB_PAGE_SIZE]>>,
+        data: Arc<RwLock<[u8; BASEDB_PAGE_SIZE as usize]>>,
         /// ID of page that is being read from/written to disk
         page_id: PageId,
         /// Callback to signal to request issuer when the request completes
@@ -103,7 +102,7 @@ impl DiskScheduler {
 #[cfg(test)]
 mod tests {
     use crate::storage::disk::disk_scheduler::{DiskRequest, DiskScheduler};
-    use crate::{common::constants::BASEDB_PAGE_SIZE, storage::disk::disk_manager::DiskManager};
+    use crate::{common::config::BASEDB_PAGE_SIZE, storage::disk::disk_manager::DiskManager};
     use std::fs;
     use std::path::Path;
     use std::sync::mpsc::channel;
@@ -111,9 +110,10 @@ mod tests {
 
     #[test]
     fn test_disk_scheduler() {
-        let buf: Arc<RwLock<[u8; BASEDB_PAGE_SIZE]>> = Arc::new(RwLock::new([0; BASEDB_PAGE_SIZE]));
-        let data: Arc<RwLock<[u8; BASEDB_PAGE_SIZE]>> =
-            Arc::new(RwLock::new([0; BASEDB_PAGE_SIZE]));
+        let buf: Arc<RwLock<[u8; BASEDB_PAGE_SIZE as usize]>> =
+            Arc::new(RwLock::new([0; BASEDB_PAGE_SIZE as usize]));
+        let data: Arc<RwLock<[u8; BASEDB_PAGE_SIZE as usize]>> =
+            Arc::new(RwLock::new([0; BASEDB_PAGE_SIZE as usize]));
         let db_file_name = Path::new("test_diskscheduler.db");
 
         let test_string = b"A test string";

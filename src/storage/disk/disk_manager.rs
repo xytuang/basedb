@@ -7,9 +7,9 @@ use std::{
 };
 
 use crate::common::{
-    constants::{BASEDB_PAGE_SIZE, DEFAULT_DB_IO_SIZE},
+    config::PageId,
+    config::{BASEDB_PAGE_SIZE, DEFAULT_DB_IO_SIZE},
     errors::{DiskManagerError, InternalError},
-    types::PageId,
 };
 
 /// Takes care of the allocation and deallocation of pages within a database.
@@ -68,7 +68,7 @@ impl DiskManager {
             num_flushes: 0,
             num_writes: 0,
             num_deletes: 0,
-            page_capacity: DEFAULT_DB_IO_SIZE,
+            page_capacity: DEFAULT_DB_IO_SIZE as usize,
             pages: HashMap::new(),
             free_slots: VecDeque::new(),
             db_file_name: db_file_name.to_str().unwrap_or_default().to_string(),
@@ -90,7 +90,7 @@ impl DiskManager {
     pub fn write_page(
         &self,
         page_id: PageId,
-        page_data: Arc<RwLock<[u8; BASEDB_PAGE_SIZE]>>,
+        page_data: Arc<RwLock<[u8; BASEDB_PAGE_SIZE as usize]>>,
     ) -> Result<(), DiskManagerError> {
         let mut inner = self.inner.lock().unwrap();
         let offset = if let Some(&offset) = inner.pages.get(&page_id) {
@@ -124,7 +124,7 @@ impl DiskManager {
     pub fn read_page(
         &self,
         page_id: PageId,
-        page_data: Arc<RwLock<[u8; BASEDB_PAGE_SIZE]>>,
+        page_data: Arc<RwLock<[u8; BASEDB_PAGE_SIZE as usize]>>,
     ) -> Result<(), DiskManagerError> {
         let mut inner = self.inner.lock().unwrap();
         let offset = if let Some(&offset) = inner.pages.get(&page_id) {
@@ -151,7 +151,7 @@ impl DiskManager {
             .read(&mut *data_guard)
             .map_err(InternalError::IOError)?;
 
-        if byte_count < BASEDB_PAGE_SIZE {
+        if byte_count < BASEDB_PAGE_SIZE as usize {
             data_guard[byte_count..].fill(0);
         }
 
