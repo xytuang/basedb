@@ -25,7 +25,7 @@ pub enum DiskError {
     #[error("DiskManagerError")]
     DiskManager(#[from] DiskManagerError),
     #[error("DiskManagerError")]
-    DiskScheduler(#[from] DiskSchedulerError)
+    DiskScheduler(#[from] DiskSchedulerError),
 }
 
 #[derive(Debug, Error)]
