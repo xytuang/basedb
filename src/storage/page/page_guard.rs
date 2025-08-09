@@ -2,7 +2,7 @@ use std::sync::{mpsc::channel, Arc, RwLock};
 
 use crate::{
     buffer::{buffer_pool_manager::FrameHeader, lru_k_replacer::LRUKReplacer},
-    common::{constants::BASEDB_PAGE_SIZE, types::PageId},
+    common::{config::PageId, config::BASEDB_PAGE_SIZE},
     storage::disk::disk_scheduler::{DiskRequest, DiskScheduler},
 };
 /// Guarantees thread safe read access to a page of data.
@@ -65,7 +65,7 @@ impl ReadPageGuard {
     }
 
     /// Get pointer to the data this page guard is protecting
-    pub fn get_data(&self) -> Arc<RwLock<[u8; BASEDB_PAGE_SIZE]>> {
+    pub fn get_data(&self) -> Arc<RwLock<[u8; BASEDB_PAGE_SIZE as usize]>> {
         self.frame.get_data()
     }
 
@@ -92,12 +92,10 @@ impl ReadPageGuard {
 
 impl Drop for ReadPageGuard {
     fn drop(&mut self) {
-        let new_pin_count = self.frame.decrease_pin_count();
-        if new_pin_count == 0 {
-            self.replacer
-                .set_evictable(self.frame.get_frame_id(), true)
-                .unwrap();
-        };
+        let remaining = self.frame.unpin();
+        if remaining == 0 {
+            let _ = self.replacer.set_evictable(self.frame.get_frame_id(), true);
+        }
     }
 }
 
@@ -123,7 +121,7 @@ impl WritePageGuard {
     }
 
     /// Get pointer to the data this page guard is protecting
-    pub fn get_data(&self) -> Arc<RwLock<[u8; BASEDB_PAGE_SIZE]>> {
+    pub fn get_data(&self) -> Arc<RwLock<[u8; BASEDB_PAGE_SIZE as usize]>> {
         self.frame.get_data()
     }
 
@@ -154,13 +152,10 @@ impl WritePageGuard {
 
 impl Drop for WritePageGuard {
     fn drop(&mut self) {
-        let new_pin_count = self.frame.decrease_pin_count();
-        if new_pin_count == 0 {
-
-            self.replacer
-                .set_evictable(self.frame.get_frame_id(), true)
-                .unwrap();
-        };
+        let remaining = self.frame.unpin();
+        if remaining == 0 {
+            let _ = self.replacer.set_evictable(self.frame.get_frame_id(), true);
+        }
     }
 }
 
@@ -170,9 +165,12 @@ mod tests {
 
     use crate::{
         buffer::buffer_pool_manager::BufferPoolManager,
-        common::types::PageId,
+        common::config::PageId,
         recovery::log_manager::LogManager,
-        storage::{disk::disk_manager::DiskManager, page::page_guard::WritePageGuard},
+        storage::{
+            disk::{self, disk_manager::DiskManager},
+            page::page_guard::WritePageGuard,
+        },
     };
 
     #[test]
